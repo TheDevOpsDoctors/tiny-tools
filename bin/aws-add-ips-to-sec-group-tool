@@ -1,0 +1,51 @@
+#!/usr/bin/env ruby
+
+require "aws-sdk"
+
+group_id = ARGV[0]
+
+if group_id.nil? or group_id.empty?
+  raise "Must give group ID"
+end
+
+ips = STDIN.readlines.map(&:strip)
+
+if ips.empty?
+  raise "Feed in IPs or IP masks via STDIN"
+end
+
+ec2client = Aws::EC2::Client.new
+
+existing_ip_permissions = []
+new_ips = []
+
+begin
+  secgroup_data = ec2client.describe_security_groups(group_ids: [group_id])
+  existing_ip_permissions = secgroup_data.security_groups.first.ip_permissions
+rescue Aws::EC2::Errors::InvalidGroupNotFound
+end
+
+new_ips = ips.dup.delete_if do |ip|
+  existing_ip_permissions.find do |permission|
+    permission.ip_protocol == "tcp" and
+      permission.from_port == 443 and
+      permission.to_port == 443 and
+      permission.ip_ranges.find { |iprange| iprange.cidr_ip == "#{ip}/32" }
+  end
+end
+
+if ! new_ips.empty?
+ec2client.authorize_security_group_ingress(
+  group_id: group_id,
+  ip_permissions: [
+    {
+      ip_protocol: "tcp",
+      from_port: 443,
+      to_port: 443,
+      ip_ranges: new_ips.map {|ip| {cidr_ip: "#{ip}/32"} }
+    }
+  ]
+)
+else
+  puts "Security group already has all IPs"
+end
