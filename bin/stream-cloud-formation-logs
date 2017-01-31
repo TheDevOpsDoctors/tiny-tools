@@ -1,0 +1,43 @@
+#!/usr/bin/env ruby
+
+require "json"
+require "time"
+require "pry"
+
+require "aws-sdk"
+
+ENV["AWS_DEFAULT_REGION"] ||= "eu-west-1"
+
+client = Aws::CloudWatchLogs::Client.new
+
+group, stream, start_time, end_time = ARGV[0..3]
+
+start_time = Time.parse(start_time)
+end_time = Time.parse(end_time)
+
+STDERR.puts "Getting events from #{start_time} to #{end_time}"
+
+response = client.get_log_events(
+  log_group_name: group,
+  log_stream_name: stream,
+  start_time: start_time.to_i*1000,
+  end_time: end_time.to_i*1000
+)
+
+log_lines = response.events.map(&:message).dup
+
+STDERR.puts "Starting"
+loop do
+  response = client.get_log_events(
+    log_group_name: group,
+    log_stream_name: stream,
+    next_token: response.next_backward_token
+  )
+  log_lines = response.events.map(&:message) + log_lines
+
+  STDERR.puts("start_time = #{start_time}(#{start_time.to_i*1000}), first event time = #{Time.at(response.events.first.timestamp/1000)}(#{response.events.first.timestamp})")
+
+  break if response.events.first.timestamp < start_time.to_i*1000
+end
+
+puts log_lines
